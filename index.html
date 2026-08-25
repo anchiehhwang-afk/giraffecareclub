@@ -830,9 +830,9 @@ function openEditOrderModal(orderId){
     bg.querySelectorAll('[data-eo-status]').forEach(el=> el.onclick = ()=>{ draft.status = el.getAttribute('data-eo-status'); draw(); });
     bg.querySelectorAll('[data-eo-minus]').forEach(el=>{ el.onclick = ()=>{ const k=el.getAttribute('data-eo-minus'); qtyMap[k]=Math.max(0,(qtyMap[k]||0)-1); draw(); }; });
     bg.querySelectorAll('[data-eo-plus]').forEach(el=>{ el.onclick = ()=>{ const k=el.getAttribute('data-eo-plus'); qtyMap[k]=(qtyMap[k]||0)+1; draw(); }; });
-    document.getElementById('eo-cancel').onclick = ()=> bg.remove();
-    document.getElementById('eo-save').onclick = ()=>{ saveOrderEdit(order, qtyMap, draft.status); bg.remove(); };
-    document.getElementById('eo-delete').onclick = ()=>{
+    bg.querySelector('#eo-cancel').onclick = ()=> bg.remove();
+    bg.querySelector('#eo-save').onclick = ()=>{ saveOrderEdit(order, qtyMap, draft.status); bg.remove(); };
+    bg.querySelector('#eo-delete').onclick = ()=>{
       openConfirmModal('確定要刪除這筆訂單嗎？此操作無法復原。', ()=>{ deleteOrder(order.id); bg.remove(); });
     };
   }
