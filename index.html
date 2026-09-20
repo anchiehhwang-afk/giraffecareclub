@@ -202,6 +202,7 @@ select.input option{background:#F4C542;color:#241019;}
 .plan-title{font-weight:700;font-size:14.5px;color:var(--ivory);}
 .plan-price{font-family:'Cormorant Garamond',serif;font-size:20px;color:var(--gold-soft);font-weight:700;}
 .plan-desc{font-size:12px;color:var(--muted);margin-top:4px;line-height:1.6;}
+.plan-image{width:100%;border-radius:var(--radius-sm);margin-top:10px;display:block;object-fit:cover;max-height:180px;}
 
 /* toast */
 #toast{
@@ -1229,11 +1230,12 @@ function exportManageExcel(){
   if(orderRows.length>0) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(orderRows), '歷史訂單');
   XLSX.writeFile(wb, `Giraffe-Care-Club-管理紀錄-${todayStr()}.xlsx`);
 }
-function planBlock(key, title, price, desc, highlight){
+function planBlock(key, title, price, desc, highlight, image){
   const qty = ui.shopQty[key]||0;
   return `
     <div class="plan" ${highlight?'style="border-color:rgba(201,162,76,0.4);"':''}>
       <div class="plan-top"><div class="plan-title">${title}</div><div class="plan-price num">${fmtMoney(price)}</div></div>
+      ${image?`<img class="plan-image" src="${image}" alt="${title}">`:''}
       ${desc?`<div class="plan-desc">${desc}</div>`:''}
       <div class="row mt12" style="align-items:center;justify-content:space-between;">
         <div class="row" style="align-items:center;gap:10px;width:auto;">
@@ -1252,12 +1254,12 @@ function renderShopTab(){
   const addonBDesc = `將當次${p.monthly.basicLabel}升級為 ${p.addonB.totalDuration} 分鐘`;
   return `
     <div class="eyebrow" style="text-align:left;">月訂閱</div>
-    ${planBlock('monthly', p.monthly.label, p.monthly.price, monthlyDesc, true)}
+    ${planBlock('monthly', p.monthly.label, p.monthly.price, monthlyDesc, true, 'images/monthly.png')}
 
     <div class="divider"></div>
     <div class="eyebrow" style="text-align:left;">加購項目</div>
-    ${planBlock('addonA', p.addonA.label, p.addonA.price, addonADesc)}
-    ${planBlock('addonB', p.addonB.label, p.addonB.price, addonBDesc)}
+    ${planBlock('addonA', p.addonA.label, p.addonA.price, addonADesc, false, 'images/lux.png')}
+    ${planBlock('addonB', p.addonB.label, p.addonB.price, addonBDesc, false, 'images/princess.png')}
 
     <div class="divider"></div>
     <div class="eyebrow" style="text-align:left;">購物車</div>
