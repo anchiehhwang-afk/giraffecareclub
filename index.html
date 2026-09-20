@@ -110,6 +110,19 @@ select.input option{background:#F4C542;color:#241019;}
 .badge-confirmed{background:rgba(143,174,134,0.18);color:var(--success);}
 .badge-completed{background:rgba(243,233,221,0.1);color:var(--muted);}
 .badge-declined{background:rgba(192,106,95,0.18);color:var(--danger);}
+.cal-wrap{margin-top:12px;}
+.cal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
+.cal-nav{background:transparent;border:1px solid rgba(243,233,221,0.2);color:var(--gold-soft);font-size:16px;cursor:pointer;padding:4px 14px;border-radius:8px;}
+.cal-title{font-size:14px;font-weight:600;color:var(--ivory);}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;}
+.cal-weekday{text-align:center;font-size:10.5px;color:var(--muted);padding:4px 0;}
+.cal-day{aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:9px;font-size:12.5px;color:var(--ivory);cursor:pointer;background:rgba(255,255,255,0.03);gap:2px;}
+.cal-day.empty{visibility:hidden;cursor:default;}
+.cal-day.today{border:1px solid var(--gold-soft);}
+.cal-day.selected{background:rgba(201,162,76,0.28);}
+.cal-dot{width:5px;height:5px;border-radius:50%;}
+.cal-legend{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px;font-size:10.5px;color:var(--muted);}
+.cal-legend .cal-dot{display:inline-block;margin-right:4px;vertical-align:1px;}
 .hidden{display:none !important;}
 .center{text-align:center;}
 .topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
@@ -189,6 +202,7 @@ select.input option{background:#F4C542;color:#241019;}
 .plan-title{font-weight:700;font-size:14.5px;color:var(--ivory);}
 .plan-price{font-family:'Cormorant Garamond',serif;font-size:20px;color:var(--gold-soft);font-weight:700;}
 .plan-desc{font-size:12px;color:var(--muted);margin-top:4px;line-height:1.6;}
+.plan-image{width:100%;border-radius:var(--radius-sm);margin-top:10px;display:block;object-fit:cover;max-height:180px;}
 
 /* toast */
 #toast{
@@ -212,12 +226,13 @@ select.input option{background:#F4C542;color:#241019;}
 <div id="toast"></div>
 
 <script>
-const SERVICES = {
-  full:   {key:'full',   label:'全身按摩（基礎）', duration:3, price:1},
-  hand:   {key:'hand',   label:'加購一隻手',       duration:2, price:1},
-  foot:   {key:'foot',   label:'加購一隻脚',       duration:2, price:1},
-  upgrade:{key:'upgrade',label:'雙手雙脚全套升級', duration:8, price:3.5}
+/* default price table — 技師可在「總覽」頁的「價目表設定」中修改，存在 settings.pricing（app_settings.pricing 欄位） */
+const DEFAULT_PRICING = {
+  monthly: { label:'月訂閱', price:40, days:30, basicLabel:'基礎按摩', basicCount:20, basicDuration:7, luxuryLabel:'頂奢公主待遇', luxuryCount:6, luxuryDuration:30 },
+  addonA: { label:'豪華套餐升級', totalDuration:15, price:3 },
+  addonB: { label:'頂奢套餐升級', totalDuration:30, price:5 }
 };
+function clonePricing(p){ return JSON.parse(JSON.stringify(p)); }
 const SUPABASE_URL = 'https://rsuidciaxwquwsezemsj.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJzdWlkY2lheHdxdXdzZXplbXNqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcyODY5OTIsImV4cCI6MjEwMjg2Mjk5Mn0.WE3zRoGGA2FK2hoKmIQMYJz0NjX0QEnlmbNAZgnJr6I';
 const SB_HEADERS = { apikey: SUPABASE_ANON_KEY, Authorization: 'Bearer '+SUPABASE_ANON_KEY };
@@ -228,17 +243,54 @@ const STAFF_CARD_IMG = "https://rsuidciaxwquwsezemsj.supabase.co/storage/v1/obje
 let ui = {
   screen:'loading', role:null, memberTab:'card', masseuseTab:'manage', pinInput:'',
   onboardStep:1, onboardPin:'', settingsOpen:false,
-  bookDate:todayStr(), bookTime:'', bookPrimary:'full', bookAddonHand:0, bookAddonFoot:0, bookUseVoucher:false, bookVoucherCode:'', bookNote:'',
+  bookDate:todayStr(), bookTime:'', bookPrimary:'basic', bookAddon:null, bookNote:'',
   cart:[],
-  shopQty:{ full:0, hand:0, foot:0, upgrade:0, monthly:0, addon5:0, addon10:0 }
+  shopQty:{ monthly:0, addonA:0, addonB:0 },
+  calendarMonth: todayStr().slice(0,7), calendarSelectedDate: null,
+  pastOrdersMonth: null, pastOrdersSearchedMonth: null, pastOrdersExpanded: false,
+  historyBookingsMonth: null, historyBookingsSearchedMonth: null, historyBookingsExpanded: false,
+  historyOrdersMonth: null, historyOrdersSearchedMonth: null, historyOrdersExpanded: false
 };
+
+/* ---------- month-search UI helpers (shared by Past Orders / 歷史預約管理 / 歷史訂單管理) ---------- */
+function getAvailableMonths(items, dateFn){
+  const set = new Set();
+  items.forEach(it=>{ const d = dateFn(it); if(d) set.add(d.slice(0,7)); });
+  return Array.from(set).sort().reverse();
+}
+function monthLabel(mk){
+  if(!mk) return '';
+  const [y,m] = mk.split('-');
+  return `${y}年${Number(m)}月`;
+}
+function renderMonthSearchHeader(prefix, months, selectedMonth){
+  if(months.length===0) return `<div class="empty">還沒有資料</div>`;
+  const sel = (selectedMonth && months.includes(selectedMonth)) ? selectedMonth : months[0];
+  return `
+    <div class="row" style="gap:8px;align-items:center;">
+      <select class="input col" id="${prefix}-month-select">
+        ${months.map(mk=>`<option value="${mk}" ${mk===sel?'selected':''}>${monthLabel(mk)}</option>`).join('')}
+      </select>
+      <button class="btn btn-solid btn-sm" id="${prefix}-search-btn">搜尋</button>
+    </div>`;
+}
+function renderMonthResultsList(prefix, searchedMonth, resultsSorted, expanded, renderItemFn){
+  if(!searchedMonth) return '';
+  if(resultsSorted.length===0) return `<div class="empty mt12">${monthLabel(searchedMonth)}無記錄</div>`;
+  const shown = expanded ? resultsSorted : resultsSorted.slice(0,6);
+  const rows = shown.map(renderItemFn).join('');
+  const expandBtn = (!expanded && resultsSorted.length>6)
+    ? `<button class="btn btn-ghost btn-sm mt12" id="${prefix}-expand-btn">展開所有記錄（共${resultsSorted.length}筆）</button>`
+    : '';
+  return `<div class="mt12">${rows}</div>${expandBtn}`;
+}
 
 /* ================= data model (multi-table, no whole-blob overwrite) ================= */
 let bookings = [];
 let orders = [];
 let sessions = [];
 let vouchers = [];
-let settings = { pin:'', name:'寶貝', masseuseName:'你的專屬按摩師', setupDone:false };
+let settings = { pin:'', name:'寶貝', masseuseName:'你的專屬按摩師', setupDone:false, pricing: clonePricing(DEFAULT_PRICING) };
 let ready = false;
 
 function todayStr(){ return toDateStr(new Date()); }
@@ -283,14 +335,15 @@ async function dbUpsertSettings(patch){
   const res = await fetch(`${SUPABASE_URL}/rest/v1/app_settings?on_conflict=id`, {
     method:'POST',
     headers:{ ...SB_HEADERS, 'Content-Type':'application/json', Prefer:'resolution=merge-duplicates,return=minimal' },
-    body: JSON.stringify({ id:'main', pin:settings.pin, name:settings.name, masseuse_name:settings.masseuseName, setup_done:settings.setupDone })
+    body: JSON.stringify({ id:'main', pin:settings.pin, name:settings.name, masseuse_name:settings.masseuseName, setup_done:settings.setupDone, pricing:settings.pricing })
   });
   if(!res.ok) throw new Error('save settings failed: '+res.status);
 }
 
 /* row <-> app-shape mappers (DB uses snake_case, app uses camelCase to match existing render code) */
-function rowToBooking(r){ return { id:r.id, date:r.date, time:r.time, addonHand:r.addon_hand, addonFoot:r.addon_foot, voucherCode:r.voucher_code, useUpgradePool:r.use_upgrade_pool, note:r.note||'', status:r.status, createdAt:r.created_at }; }
-function bookingToRow(b){ return { id:b.id, date:b.date, time:b.time, addon_hand:b.addonHand, addon_foot:b.addonFoot, voucher_code:b.voucherCode, use_upgrade_pool:!!b.useUpgradePool, note:b.note||'', status:b.status, created_at:b.createdAt }; }
+/* addon_hand/addon_foot/voucher_code/use_upgrade_pool are legacy columns kept for old booking records made before the pricing redesign; new bookings use primary_type/addon instead */
+function rowToBooking(r){ return { id:r.id, date:r.date, time:r.time, primaryType:r.primary_type||null, addon:r.addon||null, addonHand:r.addon_hand, addonFoot:r.addon_foot, voucherCode:r.voucher_code, useUpgradePool:r.use_upgrade_pool, note:r.note||'', status:r.status, createdAt:r.created_at }; }
+function bookingToRow(b){ return { id:b.id, date:b.date, time:b.time, primary_type:b.primaryType||null, addon:b.addon||null, addon_hand:b.addonHand||0, addon_foot:b.addonFoot||0, voucher_code:b.voucherCode||null, use_upgrade_pool:!!b.useUpgradePool, note:b.note||'', status:b.status, created_at:b.createdAt }; }
 function rowToOrder(r){ return { id:r.id, items:r.items, total:r.total, status:r.status, createdAt:r.created_at, confirmedAt:r.confirmed_at, cancelledAt:r.cancelled_at }; }
 function orderToRow(o){ return { id:o.id, items:o.items, total:o.total, status:o.status, created_at:o.createdAt, confirmed_at:o.confirmedAt||null, cancelled_at:o.cancelledAt||null }; }
 function rowToSession(r){ return { id:r.id, bookingId:r.booking_id, date:r.date, time:r.time, service:r.service, source:r.source, price:r.price }; }
@@ -309,8 +362,17 @@ async function loadState(){
     sessions = sRows.map(rowToSession);
     vouchers = vRows.map(rowToVoucher);
     if(setRows && setRows[0]){
-      settings = { pin:setRows[0].pin||'', name:setRows[0].name||'寶貝', masseuseName:setRows[0].masseuse_name||'你的專屬按摩師', setupDone:!!setRows[0].setup_done };
+      const dbPricing = setRows[0].pricing || null;
+      settings = {
+        pin:setRows[0].pin||'', name:setRows[0].name||'寶貝', masseuseName:setRows[0].masseuse_name||'你的專屬按摩師', setupDone:!!setRows[0].setup_done,
+        pricing: dbPricing ? {
+          monthly: { ...DEFAULT_PRICING.monthly, ...(dbPricing.monthly||{}) },
+          addonA: { ...DEFAULT_PRICING.addonA, ...(dbPricing.addonA||{}) },
+          addonB: { ...DEFAULT_PRICING.addonB, ...(dbPricing.addonB||{}) }
+        } : clonePricing(DEFAULT_PRICING)
+      };
     } else {
+      settings.pricing = clonePricing(DEFAULT_PRICING);
       await dbUpsertSettings(settings);
     }
     ready = true;
@@ -325,15 +387,7 @@ async function loadState(){
 /* ---------- derived membership (nothing here is ever stored — always recomputed from bookings/orders/sessions/vouchers) ---------- */
 function getMembership(){
   const confirmedOrders = orders.filter(o=>o.status==='confirmed');
-
-  // tier: derived purely from currently-confirmed addon-pack orders
-  let tier = null;
-  confirmedOrders.forEach(o=>{
-    o.items.forEach(it=>{
-      if(it.key==='addon10') tier='plus10';
-      else if(it.key==='addon5' && tier!=='plus10') tier='plus5';
-    });
-  });
+  const p = settings.pricing;
 
   // expiryDate: replay confirmed monthly orders in chronological order of confirmation
   const monthlyOrders = confirmedOrders
@@ -341,35 +395,30 @@ function getMembership(){
     .sort((a,b)=> (a.confirmedAt||'').localeCompare(b.confirmedAt||''));
   let expiryDate = null;
   let memberSince = null;
+  const cycleDays = p.monthly.days || 30;
   monthlyOrders.forEach(o=>{
     if(!memberSince) memberSince = o.confirmedAt;
     const qty = o.items.find(it=>it.key==='monthly').qty;
     for(let i=0;i<qty;i++){
       const anchor = (expiryDate && new Date(expiryDate) >= new Date(o.confirmedAt)) ? new Date(expiryDate) : new Date(o.confirmedAt);
-      anchor.setDate(anchor.getDate()+30);
+      anchor.setDate(anchor.getDate()+cycleDays);
       expiryDate = toDateStr(anchor);
     }
   });
   const active = confirmedOrders.length>0;
-  const planType = monthlyOrders.length>0 ? 'monthly' : (active ? 'single' : null);
-  const monthlyActive = planType==='monthly' && expiryDate && new Date(expiryDate) >= new Date(todayStr());
-  const level = !active ? '尚未開卡' : (monthlyActive ? (tier==='plus10'?'尊爵卡':(tier==='plus5'?'尊寵卡':'寵愛卡')) : '體驗卡');
+  const planType = monthlyOrders.length>0 ? 'monthly' : null;
 
-  // monthlyRemaining: granted (30 per monthly qty) minus consumed (sessions covered by monthly)
-  const monthlyGranted = monthlyOrders.reduce((s,o)=> s + 30*o.items.find(it=>it.key==='monthly').qty, 0);
-  const monthlyUsed = sessions.filter(s=>s.service==='full' && s.source==='月訂閱涵蓋').length;
-  const monthlyRemaining = Math.max(0, monthlyGranted - monthlyUsed);
+  // basicRemaining / luxuryRemaining: two independent pools granted by monthly orders, each minus its own consumed sessions
+  const monthlyQtyTotal = monthlyOrders.reduce((s,o)=> s + o.items.find(it=>it.key==='monthly').qty, 0);
+  const basicGranted = monthlyQtyTotal * (p.monthly.basicCount||0);
+  const basicUsed = sessions.filter(s=>s.service==='basic' && s.source==='月訂閱涵蓋・基礎').length;
+  const basicRemaining = Math.max(0, basicGranted - basicUsed);
 
-  // addonCredits: granted (5/10 packs) minus consumed (upgrade sessions paid from this pool)
-  const addonGranted = confirmedOrders.reduce((s,o)=>{
-    let sum = 0;
-    o.items.forEach(it=>{ if(it.key==='addon5') sum += 5*it.qty; if(it.key==='addon10') sum += 10*it.qty; });
-    return s + sum;
-  }, 0);
-  const addonUsed = sessions.filter(s=>s.service==='upgrade' && s.source==='加購次數').length;
-  const addonCredits = Math.max(0, addonGranted - addonUsed);
+  const luxuryGranted = monthlyQtyTotal * (p.monthly.luxuryCount||0);
+  const luxuryUsed = sessions.filter(s=>s.service==='luxury' && s.source==='月訂閱涵蓋・頂奢').length;
+  const luxuryRemaining = Math.max(0, luxuryGranted - luxuryUsed);
 
-  // singleCredits: granted (single-item purchases) minus consumed
+  // addonACredits / addonBCredits: granted (single-purchase items) minus consumed (upsize sessions paid from this pool)
   function singleCredit(key, source){
     const granted = confirmedOrders.reduce((s,o)=>{
       const it = o.items.find(i=>i.key===key);
@@ -378,42 +427,34 @@ function getMembership(){
     const used = sessions.filter(s=>s.service===key && s.source===source).length;
     return Math.max(0, granted - used);
   }
-  const singleCredits = {
-    full: singleCredit('full','單次全身券'),
-    hand: singleCredit('hand','單次加購券'),
-    foot: singleCredit('foot','單次加購券'),
-    upgrade: singleCredit('upgrade','單次雙手雙脚升級套餐')
-  };
+  const addonACredits = singleCredit('addonA','加購・豪華升級');
+  const addonBCredits = singleCredit('addonB','加購・頂奢升級');
 
-  const liveVouchers = vouchers.filter(v=> orders.some(o=>o.id===v.orderId));
-
-  return { active, planType, tier, level, memberSince, expiryDate, monthlyRemaining, addonCredits, singleCredits, vouchers: liveVouchers };
+  return { active, planType, memberSince, expiryDate, basicRemaining, luxuryRemaining, addonACredits, addonBCredits };
 }
 function isMonthlyActive(){ const m = getMembership(); return m.planType==='monthly' && m.expiryDate && new Date(m.expiryDate) >= new Date(todayStr()); }
-function fullBookable(){ const m = getMembership(); return isMonthlyActive() || (m.singleCredits.full||0) > 0; }
-function upgradeBookable(){ const m = getMembership(); return (m.addonCredits||0) > 0 || (m.singleCredits.upgrade||0) > 0; }
-function hasAnyBookableItem(){ return fullBookable() || upgradeBookable(); }
-function validVouchers(){ return getMembership().vouchers.filter(v=>!v.used && v.expiryDate>=todayStr()); }
-function generateVoucherCode(){
-  const now = new Date();
-  const base = 'CJL' + String(now.getFullYear()).slice(2) + String(now.getMonth()+1).padStart(2,'0');
-  let code = base, suffix = 0;
-  const existing = new Set(vouchers.map(v=>v.code));
-  while(existing.has(code)){ suffix++; code = base + String.fromCharCode(64+suffix); }
-  return code;
+function basicBookable(){ const m = getMembership(); return isMonthlyActive() && (m.basicRemaining||0) > 0; }
+function luxuryBookable(){ const m = getMembership(); return isMonthlyActive() && (m.luxuryRemaining||0) > 0; }
+function hasAnyBookableItem(){ return basicBookable() || luxuryBookable(); }
+
+function getCatalog(){
+  const p = settings.pricing;
+  return {
+    monthly: { label:p.monthly.label, price:p.monthly.price },
+    addonA: { label:p.addonA.label, price:p.addonA.price },
+    addonB: { label:p.addonB.label, price:p.addonB.price }
+  };
 }
 
-const CATALOG = {
-  monthly: {label:'全身按摩・30天', price:28},
-  full: {label:'全身按摩（基礎・3分鐘）', price:1},
-  addon5: {label:'加購 5 次手脚升級', price:15},
-  addon10: {label:'加購 10 次手脚升級', price:28},
-  upgrade: {label:'單次加購手脚升級（8分鐘）', price:3.5},
-  hand: {label:'加購一隻手（2分鐘）', price:1},
-  foot: {label:'加購一隻脚（2分鐘）', price:1}
-};
-
 function bookingLabel(b){
+  const p = settings.pricing;
+  if(b.primaryType){
+    if(b.primaryType==='luxury') return `${p.monthly.luxuryLabel}（${p.monthly.luxuryDuration}分鐘）`;
+    if(b.addon==='A') return `${p.monthly.basicLabel}＋${p.addonA.label}（升級至${p.addonA.totalDuration}分鐘）`;
+    if(b.addon==='B') return `${p.monthly.basicLabel}＋${p.addonB.label}（升級至${p.addonB.totalDuration}分鐘）`;
+    return `${p.monthly.basicLabel}（${p.monthly.basicDuration}分鐘）`;
+  }
+  // legacy fallback for booking records created before the pricing redesign
   if(b.voucherCode) return '雙手雙脚全套升級（禮券 '+b.voucherCode+'）';
   if(b.addonHand===2 && b.addonFoot===2) return '雙手雙脚全套升級';
   if(!b.addonHand && !b.addonFoot) return '全身按摩（基礎）';
@@ -439,40 +480,22 @@ function brandLogoHTML(size){
 /* ---------- masseuse-side booking mutations ---------- */
 async function addBooking(){
   if(!ui.bookTime){ showToast('請選擇時段'); return; }
-  let addonHand=0, addonFoot=0, voucherCode=null, useUpgradePool=false;
-  if(ui.bookPrimary==='full'){
-    if(ui.bookUseVoucher){
-      if(!ui.bookVoucherCode){ showToast('請選擇禮券'); return; }
-      addonHand=2; addonFoot=2; voucherCode=ui.bookVoucherCode;
-    } else {
-      addonHand = ui.bookAddonHand; addonFoot = ui.bookAddonFoot;
-    }
-  } else if(ui.bookPrimary==='upgrade'){
-    addonHand=2; addonFoot=2; useUpgradePool=true;
+  const m = getMembership();
+  const primaryType = ui.bookPrimary;
+  if(primaryType==='basic' && !(isMonthlyActive() && (m.basicRemaining||0)>0)){ showToast('基礎按摩次數不足'); return; }
+  if(primaryType==='luxury' && !(isMonthlyActive() && (m.luxuryRemaining||0)>0)){ showToast('頂奢公主待遇次數不足'); return; }
+  let addon = null;
+  if(primaryType==='basic'){
+    if(ui.bookAddon==='A' && !((m.addonACredits||0)>0)){ showToast('豪華套餐升級次數不足，請先前往購買'); return; }
+    if(ui.bookAddon==='B' && !((m.addonBCredits||0)>0)){ showToast('頂奢套餐升級次數不足，請先前往購買'); return; }
+    addon = ui.bookAddon || null;
   }
-  if(!voucherCode && !hasEnoughAddonQuota()){
-    showToast('加購額度不足，請先購買加購方案，或重新選擇加購數量');
-    return;
-  }
-  const b = { id:uid(), date:ui.bookDate, time:ui.bookTime, addonHand, addonFoot, voucherCode, useUpgradePool, note:ui.bookNote, status:'pending', createdAt:Date.now() };
+  const b = { id:uid(), date:ui.bookDate, time:ui.bookTime, primaryType, addon, addonHand:0, addonFoot:0, voucherCode:null, useUpgradePool:false, note:ui.bookNote, status:'pending', createdAt:Date.now() };
   bookings.unshift(b);
   try{ await dbInsert('bookings', bookingToRow(b)); }catch(e){ console.error(e); showToast('儲存失敗，請確認網路連線'); }
-  ui.bookTime=''; ui.bookNote=''; ui.bookPrimary='full'; ui.bookAddonHand=0; ui.bookAddonFoot=0; ui.bookVoucherCode=''; ui.bookUseVoucher=false;
+  ui.bookTime=''; ui.bookNote=''; ui.bookAddon=null;
   render();
   openBookingSubmittedModal();
-}
-function hasEnoughAddonQuota(){
-  const m = getMembership();
-  if(ui.bookPrimary==='full'){
-    if(ui.bookUseVoucher) return true;
-    const okHand = ui.bookAddonHand <= (m.singleCredits.hand||0);
-    const okFoot = ui.bookAddonFoot <= (m.singleCredits.foot||0);
-    return okHand && okFoot;
-  }
-  if(ui.bookPrimary==='upgrade'){
-    return ((m.addonCredits||0) + (m.singleCredits.upgrade||0)) >= 1;
-  }
-  return true;
 }
 function openBookingSubmittedModal(){
   const bg = document.createElement('div');
@@ -503,48 +526,43 @@ async function declineBooking(id){
   try{ await dbUpdate('bookings','id', id, {status:'declined'}); }catch(e){ console.error(e); showToast('更新失敗'); }
   render();
 }
-function determineSource(key){
+function determineSource(type){
   const m = getMembership();
-  if(key==='full'){
-    if(isMonthlyActive()) return {source:'月訂閱涵蓋', price:0};
-    if(m.singleCredits.full>0) return {source:'單次全身券', price:0};
-    return {source:'現場加算', price:CATALOG.full.price};
+  const p = settings.pricing;
+  if(type==='basic'){
+    if(isMonthlyActive() && m.basicRemaining>0) return {source:'月訂閱涵蓋・基礎', price:0};
+    return {source:'現場加算', price:p.monthly.price};
   }
-  if(key==='hand' || key==='foot'){
-    if(m.singleCredits[key]>0) return {source:'單次加購券', price:0};
-    return {source:'現場加算', price:CATALOG[key].price};
+  if(type==='luxury'){
+    if(isMonthlyActive() && m.luxuryRemaining>0) return {source:'月訂閱涵蓋・頂奢', price:0};
+    return {source:'現場加算', price:p.monthly.price};
   }
-  if(key==='upgrade'){
-    if(m.addonCredits>0) return {source:'加購次數', price:0};
-    if(m.singleCredits.upgrade>0) return {source:'單次雙手雙脚升級套餐', price:0};
-    return {source:'現場加算', price:CATALOG.upgrade.price};
+  if(type==='addonA'){
+    if(m.addonACredits>0) return {source:'加購・豪華升級', price:0};
+    return {source:'現場加算', price:p.addonA.price};
+  }
+  if(type==='addonB'){
+    if(m.addonBCredits>0) return {source:'加購・頂奢升級', price:0};
+    return {source:'現場加算', price:p.addonB.price};
   }
 }
 async function performBookingService(b){
-  const baseR = determineSource('full');
-  const newSessions = [{ id:uid(), bookingId:b.id, date:b.date, time:b.time, service:'full', source:baseR.source, price:baseR.price }];
-  if(b.voucherCode){
-    const v = vouchers.find(x=>x.code===b.voucherCode && !x.used);
-    if(v){ v.used=true; v.usedDate=todayStr(); try{ await dbUpdate('vouchers','code', v.code, {used:true, used_date:v.usedDate}); }catch(e){ console.error(e); } }
-    newSessions.push({ id:uid(), bookingId:b.id, date:b.date, time:b.time, service:'upgrade', source:'免費禮券兌換', price:0 });
-  } else if(b.useUpgradePool){
-    const r = determineSource('upgrade');
-    newSessions.push({ id:uid(), bookingId:b.id, date:b.date, time:b.time, service:'upgrade', source:r.source, price:r.price });
+  const newSessions = [];
+  if(b.primaryType==='luxury'){
+    const r = determineSource('luxury');
+    newSessions.push({ id:uid(), bookingId:b.id, date:b.date, time:b.time, service:'luxury', source:r.source, price:r.price });
   } else {
-    for(let i=0;i<b.addonHand;i++){ const r=determineSource('hand'); newSessions.push({ id:uid(), bookingId:b.id, date:b.date, time:b.time, service:'hand', source:r.source, price:r.price }); }
-    for(let i=0;i<b.addonFoot;i++){ const r=determineSource('foot'); newSessions.push({ id:uid(), bookingId:b.id, date:b.date, time:b.time, service:'foot', source:r.source, price:r.price }); }
+    // basic (also the fallback for legacy bookings that predate primaryType)
+    const r = determineSource('basic');
+    newSessions.push({ id:uid(), bookingId:b.id, date:b.date, time:b.time, service:'basic', source:r.source, price:r.price });
+    if(b.addon==='A'){ const ra = determineSource('addonA'); newSessions.push({ id:uid(), bookingId:b.id, date:b.date, time:b.time, service:'addonA', source:ra.source, price:ra.price }); }
+    if(b.addon==='B'){ const rb = determineSource('addonB'); newSessions.push({ id:uid(), bookingId:b.id, date:b.date, time:b.time, service:'addonB', source:rb.source, price:rb.price }); }
   }
   sessions.unshift(...newSessions);
   try{ await Promise.all(newSessions.map(s=>dbInsert('sessions', sessionToRow(s)))); }catch(e){ console.error(e); showToast('儲存失敗，請確認網路連線'); }
 }
 async function reverseBookingService(b){
   const linked = sessions.filter(s=>s.bookingId===b.id);
-  for(const s of linked){
-    if(s.service==='upgrade' && s.source==='免費禮券兌換' && b.voucherCode){
-      const v = vouchers.find(x=>x.code===b.voucherCode);
-      if(v){ v.used=false; v.usedDate=null; try{ await dbUpdate('vouchers','code', v.code, {used:false, used_date:null}); }catch(e){ console.error(e); } }
-    }
-  }
   sessions = sessions.filter(s=>s.bookingId!==b.id);
   try{ await Promise.all(linked.map(s=>dbDelete('sessions','id', s.id))); }catch(e){ console.error(e); }
 }
@@ -570,8 +588,8 @@ async function saveBookingEdit(id, draft){
   const willBeCompleted = draft.status==='completed';
   if(wasCompleted) await reverseBookingService(b);
   b.date = draft.date; b.time = draft.time; b.note = draft.note; b.status = draft.status;
-  if(draft.useVoucher && draft.voucherCode){ b.addonHand=2; b.addonFoot=2; b.voucherCode=draft.voucherCode; }
-  else { b.addonHand=draft.addonHand; b.addonFoot=draft.addonFoot; b.voucherCode=null; }
+  b.primaryType = draft.primaryType; b.addon = draft.addon;
+  b.addonHand = 0; b.addonFoot = 0; b.voucherCode = null; b.useUpgradePool = false;
   if(willBeCompleted) await performBookingService(b);
   try{ await dbUpdate('bookings','id', id, bookingToRow(b)); }catch(e){ console.error(e); showToast('更新失敗'); }
   render();
@@ -585,10 +603,11 @@ function adjustShopQty(key, delta){
 function addToCart(key){
   const qty = ui.shopQty[key]||0;
   if(qty<=0){ showToast('請先選擇數量'); return; }
+  const catalog = getCatalog();
   const existing = ui.cart.find(c=>c.key===key);
-  if(existing) existing.qty += qty; else ui.cart.push({ key, label:CATALOG[key].label, price:CATALOG[key].price, qty });
+  if(existing) existing.qty += qty; else ui.cart.push({ key, label:catalog[key].label, price:catalog[key].price, qty });
   ui.shopQty[key] = 0;
-  showToast('已加入購物車：'+CATALOG[key].label);
+  showToast('已加入購物車：'+catalog[key].label);
   render();
 }
 function removeFromCart(key){
@@ -651,25 +670,10 @@ function openOrderSubmittedModal(order){
 }
 
 /* ---------- masseuse-side order mutations ---------- */
-async function applyOrderEffects(order){
-  const newVouchers = [];
-  order.items.forEach(it=>{
-    if(it.key==='monthly'){
-      for(let i=0;i<it.qty;i++){
-        const code = generateVoucherCode();
-        const v = { code, orderId:order.id, issuedDate:order.confirmedAt||todayStr(), expiryDate: monthsFromToday(2), used:false, usedDate:null };
-        vouchers.push(v);
-        newVouchers.push(v);
-      }
-    }
-  });
-  try{ await Promise.all(newVouchers.map(v=>dbInsert('vouchers', voucherToRow(v)))); }catch(e){ console.error(e); }
-}
-async function reverseOrderEffects(order){
-  const linked = vouchers.filter(v=>v.orderId===order.id && !v.used);
-  vouchers = vouchers.filter(v=> !(v.orderId===order.id && !v.used));
-  try{ await Promise.all(linked.map(v=>dbDelete('vouchers','code', v.code))); }catch(e){ console.error(e); }
-}
+/* membership quotas (basicRemaining/luxuryRemaining/addonACredits/addonBCredits/expiryDate) are fully derived
+   from confirmed orders + sessions every time getMembership() runs — nothing to apply/reverse here anymore. */
+async function applyOrderEffects(order){ /* no-op: state is derived */ }
+async function reverseOrderEffects(order){ /* no-op: state is derived */ }
 async function confirmOrder(id){
   const order = orders.find(o=>o.id===id); if(!order) return;
   order.status='confirmed';
@@ -704,20 +708,15 @@ function openConfirmModal(message, onConfirm){
 }
 async function deleteOrder(id){
   const order = orders.find(o=>o.id===id); if(!order) return;
-  const linkedVouchers = vouchers.filter(v=>v.orderId===order.id);
-  vouchers = vouchers.filter(v=>v.orderId!==order.id);
   orders = orders.filter(o=>o.id!==id);
-  try{
-    await Promise.all(linkedVouchers.map(v=>dbDelete('vouchers','code', v.code)));
-    await dbDelete('orders','id', id);
-  }catch(e){ console.error(e); showToast('刪除失敗，請確認網路連線'); }
+  try{ await dbDelete('orders','id', id); }catch(e){ console.error(e); showToast('刪除失敗，請確認網路連線'); }
   render();
   showToast('已刪除該筆訂單');
 }
 function openEditBookingModal(id){
   const b = bookings.find(x=>x.id===id); if(!b) return;
-  const draft = { date:b.date, time:b.time, status:b.status, addonHand:b.addonHand||0, addonFoot:b.addonFoot||0, useVoucher:!!b.voucherCode, voucherCode:b.voucherCode||'', note:b.note||'' };
-  const availableVouchers = getMembership().vouchers.filter(v=> !v.used || v.code===b.voucherCode);
+  const p = settings.pricing;
+  const draft = { date:b.date, time:b.time, status:b.status, primaryType: b.primaryType || 'basic', addon: b.addon || null, note:b.note||'' };
   const statusOptions = [['pending','待確認'],['confirmed','已確認'],['completed','已完成'],['declined','已婉拒']];
   const bg = document.createElement('div');
   bg.className='modal-bg';
@@ -733,32 +732,18 @@ function openEditBookingModal(id){
         <input class="input" type="date" id="eb-date" value="${draft.date}">
         <label class="label mt12">時段</label>
         <input class="input" type="time" id="eb-time" value="${draft.time}">
-        ${availableVouchers.length>0 ? `
-        <div class="row mt16"><div class="chip ${draft.useVoucher?'active':''}" id="eb-toggle-voucher" style="flex:1;">使用禮券</div></div>` : ''}
-        ${draft.useVoucher ? `
-        <label class="label mt16">選擇禮券</label>
-        <select class="input" id="eb-voucher">
-          <option value="">請選擇</option>
-          ${availableVouchers.map(v=>`<option value="${v.code}" ${draft.voucherCode===v.code?'selected':''}>${v.code}</option>`).join('')}
-        </select>` : `
-        <div class="row mt16" style="gap:16px;">
-          <div class="col">
-            <label class="label">手</label>
-            <div class="row" style="align-items:center;gap:10px;">
-              <button class="btn btn-ghost btn-sm" id="eb-hand-minus">－</button>
-              <div class="num" style="font-size:18px;min-width:16px;text-align:center;">${draft.addonHand}</div>
-              <button class="btn btn-ghost btn-sm" id="eb-hand-plus">＋</button>
-            </div>
-          </div>
-          <div class="col">
-            <label class="label">脚</label>
-            <div class="row" style="align-items:center;gap:10px;">
-              <button class="btn btn-ghost btn-sm" id="eb-foot-minus">－</button>
-              <div class="num" style="font-size:18px;min-width:16px;text-align:center;">${draft.addonFoot}</div>
-              <button class="btn btn-ghost btn-sm" id="eb-foot-plus">＋</button>
-            </div>
-          </div>
-        </div>`}
+        <label class="label mt12">項目</label>
+        <div class="row" style="flex-wrap:wrap;gap:8px;">
+          <div class="chip ${draft.primaryType==='basic'?'active':''}" data-eb-primary="basic" style="flex:0 0 46%;">${p.monthly.basicLabel}（${p.monthly.basicDuration}分鐘）</div>
+          <div class="chip ${draft.primaryType==='luxury'?'active':''}" data-eb-primary="luxury" style="flex:0 0 46%;">${p.monthly.luxuryLabel}（${p.monthly.luxuryDuration}分鐘）</div>
+        </div>
+        ${draft.primaryType==='basic' ? `
+        <label class="label mt12">升級加購</label>
+        <div class="row" style="flex-wrap:wrap;gap:8px;">
+          <div class="chip ${!draft.addon?'active':''}" data-eb-addon="" style="flex:0 0 30%;">不升級</div>
+          <div class="chip ${draft.addon==='A'?'active':''}" data-eb-addon="A" style="flex:0 0 30%;">${p.addonA.label}</div>
+          <div class="chip ${draft.addon==='B'?'active':''}" data-eb-addon="B" style="flex:0 0 30%;">${p.addonB.label}</div>
+        </div>` : ''}
         <label class="label mt16">備註</label>
         <input class="input" id="eb-note" value="${draft.note}">
         <div class="row mt20">
@@ -770,18 +755,11 @@ function openEditBookingModal(id){
     bg.querySelectorAll('[data-eb-status]').forEach(el=> el.onclick = ()=>{ draft.status = el.getAttribute('data-eb-status'); draw(); });
     bg.querySelector('#eb-date').oninput = (e)=>{ draft.date = e.target.value; };
     bg.querySelector('#eb-time').oninput = (e)=>{ draft.time = e.target.value; };
-    const tv = bg.querySelector('#eb-toggle-voucher'); if(tv) tv.onclick = ()=>{ draft.useVoucher = !draft.useVoucher; if(!draft.useVoucher) draft.voucherCode=''; draw(); };
-    const vs = bg.querySelector('#eb-voucher'); if(vs) vs.onchange = (e)=>{ draft.voucherCode = e.target.value; };
-    const hm = bg.querySelector('#eb-hand-minus'); if(hm) hm.onclick = ()=>{ draft.addonHand = Math.max(0, draft.addonHand-1); draw(); };
-    const hp = bg.querySelector('#eb-hand-plus'); if(hp) hp.onclick = ()=>{ draft.addonHand = Math.min(2, draft.addonHand+1); draw(); };
-    const fm = bg.querySelector('#eb-foot-minus'); if(fm) fm.onclick = ()=>{ draft.addonFoot = Math.max(0, draft.addonFoot-1); draw(); };
-    const fp = bg.querySelector('#eb-foot-plus'); if(fp) fp.onclick = ()=>{ draft.addonFoot = Math.min(2, draft.addonFoot+1); draw(); };
+    bg.querySelectorAll('[data-eb-primary]').forEach(el=> el.onclick = ()=>{ draft.primaryType = el.getAttribute('data-eb-primary'); if(draft.primaryType!=='basic') draft.addon=null; draw(); });
+    bg.querySelectorAll('[data-eb-addon]').forEach(el=> el.onclick = ()=>{ draft.addon = el.getAttribute('data-eb-addon') || null; draw(); });
     bg.querySelector('#eb-note').oninput = (e)=>{ draft.note = e.target.value; };
     bg.querySelector('#eb-cancel').onclick = ()=> bg.remove();
-    bg.querySelector('#eb-save').onclick = ()=>{
-      if(draft.useVoucher && !draft.voucherCode){ showToast('請選擇禮券'); return; }
-      saveBookingEdit(id, draft); bg.remove();
-    };
+    bg.querySelector('#eb-save').onclick = ()=>{ saveBookingEdit(id, draft); bg.remove(); };
     bg.querySelector('#eb-delete').onclick = ()=>{
       openConfirmModal('確定要刪除這筆預約紀錄嗎？此操作無法復原。', ()=>{ deleteBooking(id); bg.remove(); });
     };
@@ -1068,14 +1046,12 @@ function renderMembershipCardHTML(){
 }
 function renderCardTab(){
   const m = getMembership();
+  const p = settings.pricing;
   const quotaItems = [
-    {n:m.monthlyRemaining||0, l:'月訂閱剩餘次數'},
-    {n:validVouchers().length, l:'免費升級禮券'},
-    {n:m.addonCredits||0, l:'加購升級次數'},
-    {n:m.singleCredits.upgrade||0, l:'單次雙手雙脚升級套餐'},
-    {n:m.singleCredits.full||0, l:'單次全身券'},
-    {n:m.singleCredits.hand||0, l:'單次加購・手'},
-    {n:m.singleCredits.foot||0, l:'單次加購・脚'}
+    {n:m.basicRemaining||0, l:p.monthly.basicLabel+'剩餘次數'},
+    {n:m.luxuryRemaining||0, l:p.monthly.luxuryLabel+'剩餘次數'},
+    {n:m.addonACredits||0, l:p.addonA.label},
+    {n:m.addonBCredits||0, l:p.addonB.label}
   ];
   const activeItems = quotaItems.filter(it=>it.n>0);
   const quotaHTML = activeItems.length===0 ? `
@@ -1092,19 +1068,76 @@ function renderCardTab(){
     ${renderFuturePastSections()}
   `;
 }
+function renderBookingCalendar(){
+  const [cy, cm] = ui.calendarMonth.split('-').map(Number);
+  const firstDay = new Date(cy, cm-1, 1);
+  const startWeekday = firstDay.getDay();
+  const daysInMonth = new Date(cy, cm, 0).getDate();
+  const today = todayStr();
+  const dotColor = { pending:'#E7CB8E', confirmed:'#D98A93', completed:'#8FAE86', declined:'#C06A5F' };
+  const svcBadge = {pending:['待確認','badge-pending'],confirmed:['已確認','badge-confirmed'],completed:['已完成','badge-completed'],declined:['已取消','badge-declined']};
+
+  const byDate = {};
+  bookings.forEach(b=>{ (byDate[b.date] = byDate[b.date]||[]).push(b); });
+
+  let cells = '';
+  for(let i=0;i<startWeekday;i++) cells += `<div class="cal-day empty"></div>`;
+  for(let d=1; d<=daysInMonth; d++){
+    const dateStr = `${cy}-${String(cm).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const dayBookings = byDate[dateStr] || [];
+    let dotHTML = '';
+    if(dayBookings.length>0){
+      let color;
+      if(dayBookings.some(b=>b.status==='completed')) color = dotColor.completed;
+      else if(dayBookings.some(b=>b.status==='confirmed')) color = dotColor.confirmed;
+      else if(dayBookings.some(b=>b.status==='pending')) color = dotColor.pending;
+      else color = dotColor.declined;
+      dotHTML = `<div class="cal-dot" style="background:${color};"></div>`;
+    }
+    cells += `<div class="cal-day ${dateStr===today?'today':''} ${ui.calendarSelectedDate===dateStr?'selected':''}" data-cal-day="${dateStr}">${d}${dotHTML}</div>`;
+  }
+
+  const selected = ui.calendarSelectedDate ? (byDate[ui.calendarSelectedDate]||[]) : [];
+  return `
+    <div class="cal-wrap">
+      <div class="cal-header">
+        <button class="cal-nav" data-cal-nav="-1">‹</button>
+        <div class="cal-title">${cy}年${cm}月</div>
+        <button class="cal-nav" data-cal-nav="1">›</button>
+      </div>
+      <div class="cal-grid">
+        ${['日','一','二','三','四','五','六'].map(w=>`<div class="cal-weekday">${w}</div>`).join('')}
+        ${cells}
+      </div>
+      <div class="cal-legend">
+        <span><span class="cal-dot" style="background:${dotColor.pending};"></span>待確認</span>
+        <span><span class="cal-dot" style="background:${dotColor.confirmed};"></span>已確認</span>
+        <span><span class="cal-dot" style="background:${dotColor.declined};"></span>已取消</span>
+        <span><span class="cal-dot" style="background:${dotColor.completed};"></span>已完成</span>
+      </div>
+      ${ui.calendarSelectedDate ? `
+        <div class="divider"></div>
+        <div class="eyebrow" style="text-align:left;">${fmtDateNice(ui.calendarSelectedDate)}</div>
+        ${selected.length===0 ? `<div class="empty">這天沒有預約紀錄</div>` : selected.map(b=>`
+          <div class="list-item">
+            <div class="row" style="justify-content:space-between;align-items:center;">
+              <div><b>${b.time}</b></div>
+              <span class="badge ${svcBadge[b.status][1]}">${svcBadge[b.status][0]}</span>
+            </div>
+            <div style="font-size:12px;color:var(--muted);margin-top:5px;">${bookingLabel(b)}${b.note?'　・　'+b.note:''}</div>
+          </div>`).join('')}
+      ` : `<div class="empty" style="margin-top:14px;">點擊日期查看當天的預約詳情</div>`}
+    </div>
+  `;
+}
 function renderFuturePastSections(){
   const today = todayStr();
   const futureCutoff = monthsFromToday(2);
-  const pastCutoff = monthsFromToday(-2);
   const svcBadge = {pending:['待確認','badge-pending'],confirmed:['已確認','badge-confirmed'],completed:['已完成','badge-completed'],declined:['已取消','badge-declined']};
 
   const future = bookings
     .filter(b=> (b.status==='pending'||b.status==='confirmed') && b.date>=today && b.date<=futureCutoff)
     .sort((a,b)=> a.date===b.date ? a.time.localeCompare(b.time) : a.date.localeCompare(b.date));
-
-  const past = bookings
-    .filter(b=> (b.status==='completed'||b.status==='declined') && b.date>=pastCutoff)
-    .sort((a,b)=> a.date===b.date ? b.time.localeCompare(a.time) : b.date.localeCompare(a.date));
 
   const rowHTML = (b)=>`
     <div class="list-item">
@@ -1116,15 +1149,26 @@ function renderFuturePastSections(){
       ${b.status==='pending' ? `<button class="btn btn-danger btn-sm mt8" data-cancel="${b.id}">取消預約</button>` : ''}
     </div>`;
 
-  const pastOrders = orders
-    .filter(o=> o.status==='confirmed' || o.status==='cancelled')
-    .sort((a,b)=>{
-      const da = a.confirmedAt||a.cancelledAt||'';
-      const db = b.confirmedAt||b.cancelledAt||'';
-      return db.localeCompare(da) || b.createdAt-a.createdAt;
-    })
-    .slice(0,10);
   const orderBadge = {confirmed:['已確認','badge-confirmed'],cancelled:['已取消','badge-declined']};
+  const pastOrders = orders.filter(o=> o.status==='confirmed' || o.status==='cancelled');
+  const poDateFn = (o)=> o.confirmedAt || o.cancelledAt || null;
+  const poMonths = getAvailableMonths(pastOrders, poDateFn);
+  const poSearched = ui.pastOrdersSearchedMonth;
+  const poResults = poSearched ? pastOrders
+    .filter(o=> (poDateFn(o)||'').slice(0,7)===poSearched)
+    .sort((a,b)=>{
+      const da = a.confirmedAt||a.cancelledAt||''; const db = b.confirmedAt||b.cancelledAt||'';
+      return db.localeCompare(da) || b.createdAt-a.createdAt;
+    }) : [];
+  const poRow = (o)=>`
+    <div class="list-item">
+      <div class="row" style="justify-content:space-between;align-items:center;">
+        <div><b>${fmtDateNice(o.confirmedAt||o.cancelledAt||todayStr())}</b></div>
+        <span class="badge ${orderBadge[o.status][1]}">${orderBadge[o.status][0]}</span>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-top:5px;">${o.items.map(it=>`${it.label}×${it.qty}`).join('、')}</div>
+      <div class="num" style="color:var(--gold-soft);margin-top:4px;font-size:15px;">${fmtMoney(o.total)}</div>
+    </div>`;
 
   return `
     ${hasAnyBookableItem() ? `<button class="btn btn-solid mt16" id="book-now-btn"><span class="icon-symbol" style="color:#1D0F17;">calendar_add_on</span>立即預約</button>` : ''}
@@ -1133,19 +1177,12 @@ function renderFuturePastSections(){
     ${future.length===0 ? `<div class="empty">近兩個月內沒有即將到來的預約</div>` : future.map(rowHTML).join('')}
     <div class="divider"></div>
     <div class="eyebrow" style="text-align:left;">Past History</div>
-    ${past.length===0 ? `<div class="empty">近兩個月內沒有歷史紀錄</div>` : past.map(rowHTML).join('')}
+    ${renderBookingCalendar()}
     <button class="btn btn-ghost mt16" id="export-excel"><span class="icon-symbol" style="color:#F3F3F3;">csv</span>匯出所有歷史紀錄（Excel）</button>
     <div class="divider"></div>
     <div class="eyebrow" style="text-align:left;">Past Orders</div>
-    ${pastOrders.length===0 ? `<div class="empty">還沒有訂單紀錄</div>` : pastOrders.map(o=>`
-      <div class="list-item">
-        <div class="row" style="justify-content:space-between;align-items:center;">
-          <div><b>${fmtDateNice(o.confirmedAt||o.cancelledAt||todayStr())}</b></div>
-          <span class="badge ${orderBadge[o.status][1]}">${orderBadge[o.status][0]}</span>
-        </div>
-        <div style="font-size:12px;color:var(--muted);margin-top:5px;">${o.items.map(it=>`${it.label}×${it.qty}`).join('、')}</div>
-        <div class="num" style="color:var(--gold-soft);margin-top:4px;font-size:15px;">${fmtMoney(o.total)}</div>
-      </div>`).join('')}
+    ${renderMonthSearchHeader('po', poMonths, ui.pastOrdersMonth)}
+    ${renderMonthResultsList('po', poSearched, poResults, ui.pastOrdersExpanded, poRow)}
   `;
 }
 function exportBookingsExcel(){
@@ -1191,11 +1228,12 @@ function exportManageExcel(){
   if(orderRows.length>0) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(orderRows), '歷史訂單');
   XLSX.writeFile(wb, `Giraffe-Care-Club-管理紀錄-${todayStr()}.xlsx`);
 }
-function planBlock(key, title, price, desc, highlight){
+function planBlock(key, title, price, desc, highlight, image){
   const qty = ui.shopQty[key]||0;
   return `
     <div class="plan" ${highlight?'style="border-color:rgba(201,162,76,0.4);"':''}>
       <div class="plan-top"><div class="plan-title">${title}</div><div class="plan-price num">${fmtMoney(price)}</div></div>
+      ${image?`<img class="plan-image" src="${image}" alt="${title}">`:''}
       ${desc?`<div class="plan-desc">${desc}</div>`:''}
       <div class="row mt12" style="align-items:center;justify-content:space-between;">
         <div class="row" style="align-items:center;gap:10px;width:auto;">
@@ -1208,21 +1246,18 @@ function planBlock(key, title, price, desc, highlight){
     </div>`;
 }
 function renderShopTab(){
+  const p = settings.pricing;
+  const monthlyDesc = `${p.monthly.days}天內共 ${p.monthly.basicCount} 次${p.monthly.basicLabel}（${p.monthly.basicDuration}分鐘）＋ ${p.monthly.luxuryCount} 次${p.monthly.luxuryLabel}（${p.monthly.luxuryDuration}分鐘）。${isMonthlyActive() ? `（目前已訂閱，付款確認後將自動延長${p.monthly.days}天）`:''}`;
+  const addonADesc = `將當次${p.monthly.basicLabel}升級為 ${p.addonA.totalDuration} 分鐘`;
+  const addonBDesc = `將當次${p.monthly.basicLabel}升級為 ${p.addonB.totalDuration} 分鐘`;
   return `
     <div class="eyebrow" style="text-align:left;">月訂閱</div>
-    ${planBlock('monthly', '全身按摩・30天', 28, `30天內每晚1次全身按摩，並贈送 1 張雙手雙脚升級禮券（60天內使用）。${isMonthlyActive() ? '（目前已訂閱，付款確認後將自動延長30天）':''}`, true)}
-
-    <div class="divider"></div>
-    <div class="eyebrow" style="text-align:left;">單次方案</div>
-    ${planBlock('full', '全身按摩（基礎・3分鐘）', 1, '每晚的基本儀式')}
+    ${planBlock('monthly', p.monthly.label, p.monthly.price, monthlyDesc, true, 'images/monthly.png')}
 
     <div class="divider"></div>
     <div class="eyebrow" style="text-align:left;">加購項目</div>
-    ${planBlock('addon5', '加購 5 次手脚升級', 15, '訂閱期間內，任選 5 個夜晚享有雙手雙脚升級')}
-    ${planBlock('addon10', '加購 10 次手脚升級', 28, '訂閱期間內，任選 10 個夜晚享有雙手雙脚升級')}
-    ${planBlock('upgrade', '單次加購手脚升級（8分鐘）', 3.5, '單次購買雙手雙脚全套升級・比分開購買更划算')}
-    ${planBlock('hand', '加購一隻手（2分鐘）', 1)}
-    ${planBlock('foot', '加購一隻脚（2分鐘）', 1)}
+    ${planBlock('addonA', p.addonA.label, p.addonA.price, addonADesc)}
+    ${planBlock('addonB', p.addonB.label, p.addonB.price, addonBDesc)}
 
     <div class="divider"></div>
     <div class="eyebrow" style="text-align:left;">購物車</div>
@@ -1250,6 +1285,33 @@ function attachMemberBody(){
     document.querySelectorAll('[data-cancel]').forEach(el=>{
       el.onclick = ()=> cancelBooking(el.getAttribute('data-cancel'));
     });
+    document.querySelectorAll('[data-cal-nav]').forEach(el=>{
+      el.onclick = ()=>{
+        const [y,m] = ui.calendarMonth.split('-').map(Number);
+        const d = new Date(y, m-1+Number(el.getAttribute('data-cal-nav')), 1);
+        ui.calendarMonth = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+        render();
+      };
+    });
+    document.querySelectorAll('[data-cal-day]').forEach(el=>{
+      el.onclick = ()=>{
+        const date = el.getAttribute('data-cal-day');
+        ui.calendarSelectedDate = ui.calendarSelectedDate===date ? null : date;
+        render();
+      };
+    });
+    const poSel = document.getElementById('po-month-select');
+    if(poSel) poSel.onchange = ()=>{ ui.pastOrdersMonth = poSel.value; };
+    const poBtn = document.getElementById('po-search-btn');
+    if(poBtn) poBtn.onclick = ()=>{
+      const sel = document.getElementById('po-month-select');
+      ui.pastOrdersSearchedMonth = sel ? sel.value : ui.pastOrdersMonth;
+      ui.pastOrdersMonth = ui.pastOrdersSearchedMonth;
+      ui.pastOrdersExpanded = false;
+      render();
+    };
+    const poExpand = document.getElementById('po-expand-btn');
+    if(poExpand) poExpand.onclick = ()=>{ ui.pastOrdersExpanded = true; render(); };
   }
   if(ui.memberTab==='shop'){
     document.querySelectorAll('[data-qty-plus]').forEach(btn=>{
@@ -1274,24 +1336,13 @@ function attachMemberBody(){
     document.querySelectorAll('[data-primary]').forEach(el=>{
       el.onclick = ()=>{
         ui.bookPrimary = el.getAttribute('data-primary');
-        ui.bookUseVoucher = false; ui.bookVoucherCode = ''; ui.bookAddonHand = 0; ui.bookAddonFoot = 0;
+        ui.bookAddon = null;
         render();
       };
     });
-    document.querySelectorAll('[data-toggle-voucher]').forEach(el=>{
-      el.onclick = ()=>{
-        ui.bookUseVoucher = !ui.bookUseVoucher;
-        if(ui.bookUseVoucher){ ui.bookAddonHand=0; ui.bookAddonFoot=0; } else { ui.bookVoucherCode=''; }
-        render();
-      };
+    document.querySelectorAll('[data-addon]').forEach(el=>{
+      el.onclick = ()=>{ ui.bookAddon = el.getAttribute('data-addon') || null; render(); };
     });
-    document.querySelectorAll('[data-hand]').forEach(el=>{
-      el.onclick = ()=>{ ui.bookAddonHand = Math.max(0, Math.min(2, ui.bookAddonHand + Number(el.getAttribute('data-hand')))); render(); };
-    });
-    document.querySelectorAll('[data-foot]').forEach(el=>{
-      el.onclick = ()=>{ ui.bookAddonFoot = Math.max(0, Math.min(2, ui.bookAddonFoot + Number(el.getAttribute('data-foot')))); render(); };
-    });
-    const vsel = document.getElementById('bk-voucher'); if(vsel) vsel.onchange = (e)=>{ ui.bookVoucherCode = e.target.value; };
     document.getElementById('bk-note').oninput = (e)=>{ ui.bookNote = e.target.value; };
     document.getElementById('bk-submit').onclick = addBooking;
   }
@@ -1305,12 +1356,19 @@ function renderBookTab(){
       </div>
     `;
   }
-  const vouchers = validVouchers();
-  const baseLabel = isMonthlyActive() ? '月訂閱方案' : '全身按摩（基礎）';
+  const m = getMembership();
+  const p = settings.pricing;
   const primaryOptions = [];
-  if(fullBookable()) primaryOptions.push(['full', baseLabel]);
-  if(upgradeBookable()) primaryOptions.push(['upgrade','雙手雙脚全套升級']);
+  if(basicBookable()) primaryOptions.push(['basic', `${p.monthly.basicLabel}（${p.monthly.basicDuration}分鐘）`]);
+  if(luxuryBookable()) primaryOptions.push(['luxury', `${p.monthly.luxuryLabel}（${p.monthly.luxuryDuration}分鐘）`]);
   if(!primaryOptions.some(([k])=>k===ui.bookPrimary)) ui.bookPrimary = primaryOptions[0][0];
+  const showAddon = ui.bookPrimary==='basic';
+  const addonOptions = [];
+  if(showAddon){
+    if((m.addonACredits||0)>0) addonOptions.push(['A', `${p.addonA.label}（升級至${p.addonA.totalDuration}分鐘）`]);
+    if((m.addonBCredits||0)>0) addonOptions.push(['B', `${p.addonB.label}（升級至${p.addonB.totalDuration}分鐘）`]);
+  }
+  if(!showAddon || !addonOptions.some(([k])=>k===ui.bookAddon)) ui.bookAddon = null;
   return `
     <div class="card-panel">
       <div class="eyebrow" style="text-align:left;">預約下一次儀式</div>
@@ -1322,42 +1380,12 @@ function renderBookTab(){
       <div class="row" style="flex-wrap:wrap;gap:8px;">
         ${primaryOptions.map(([k,l])=>`<div class="chip ${ui.bookPrimary===k?'active':''}" data-primary="${k}" style="flex:0 0 46%;">${l}</div>`).join('')}
       </div>
-      ${ui.bookPrimary==='full' ? `
-      ${vouchers.length>0 ? `
-      <div class="row mt16">
-        <div class="chip ${ui.bookUseVoucher?'active':''}" data-toggle-voucher="1" style="flex:1;">使用禮券</div>
+      ${showAddon && addonOptions.length>0 ? `
+      <label class="label mt16">升級加購（選填）</label>
+      <div class="row" style="flex-wrap:wrap;gap:8px;">
+        <div class="chip ${!ui.bookAddon?'active':''}" data-addon="" style="flex:0 0 30%;">不升級</div>
+        ${addonOptions.map(([k,l])=>`<div class="chip ${ui.bookAddon===k?'active':''}" data-addon="${k}" style="flex:0 0 30%;">${l}</div>`).join('')}
       </div>` : ''}
-      ${ui.bookUseVoucher ? `
-      <label class="label mt16">選擇禮券</label>
-      <select class="input" id="bk-voucher">
-        <option value="">請選擇</option>
-        ${vouchers.map(v=>`<option value="${v.code}" ${ui.bookVoucherCode===v.code?'selected':''}>${v.code}（${fmtDateNice(v.expiryDate)}前使用）</option>`).join('')}
-      </select>
-      ` : `
-      ${(getMembership().singleCredits.hand>0 || getMembership().singleCredits.foot>0) ? `
-      <div class="row mt16" style="gap:16px;">
-        ${getMembership().singleCredits.hand>0 ? `
-        <div class="col">
-          <label class="label">加購・手</label>
-          <div class="row" style="align-items:center;gap:10px;">
-            <button class="btn btn-ghost btn-sm" data-hand="-1">－</button>
-            <div class="num" style="font-size:18px;min-width:16px;text-align:center;">${ui.bookAddonHand}</div>
-            <button class="btn btn-ghost btn-sm" data-hand="1">＋</button>
-          </div>
-        </div>` : ''}
-        ${getMembership().singleCredits.foot>0 ? `
-        <div class="col">
-          <label class="label">加購・脚</label>
-          <div class="row" style="align-items:center;gap:10px;">
-            <button class="btn btn-ghost btn-sm" data-foot="-1">－</button>
-            <div class="num" style="font-size:18px;min-width:16px;text-align:center;">${ui.bookAddonFoot}</div>
-            <button class="btn btn-ghost btn-sm" data-foot="1">＋</button>
-          </div>
-        </div>` : ''}
-      </div>` : ''}
-      ${ui.bookAddonHand===2 && ui.bookAddonFoot===2 ? `<div style="font-size:11.5px;color:var(--gold-soft);margin-top:8px;line-height:1.6;">💡 手脚都選滿2的話，直接購買「單次加購手脚升級」（$3.5）或加購5次/10次方案會更划算喔！當然，你也可以繼續用目前的加購券，一樣可以送出預約。</div>` : ''}
-      `}
-      ` : ''}
       <label class="label mt16">備註（選填）</label>
       <input class="input" id="bk-note" placeholder="想說的話..." value="${ui.bookNote}">
       <button class="btn btn-solid mt20" id="bk-submit">送出預約</button>
@@ -1389,6 +1417,35 @@ function attachMasseuseBody(){
     document.querySelectorAll('[data-cancel-order]').forEach(el=> el.onclick = ()=>cancelOrder(el.getAttribute('data-cancel-order')));
     document.querySelectorAll('[data-edit-order]').forEach(el=> el.onclick = ()=>openEditOrderModal(el.getAttribute('data-edit-order')));
     const em = document.getElementById('export-manage'); if(em) em.onclick = exportManageExcel;
+
+    const hbSel = document.getElementById('hb-month-select');
+    if(hbSel) hbSel.onchange = ()=>{ ui.historyBookingsMonth = hbSel.value; };
+    const hbBtn = document.getElementById('hb-search-btn');
+    if(hbBtn) hbBtn.onclick = ()=>{
+      const sel = document.getElementById('hb-month-select');
+      ui.historyBookingsSearchedMonth = sel ? sel.value : ui.historyBookingsMonth;
+      ui.historyBookingsMonth = ui.historyBookingsSearchedMonth;
+      ui.historyBookingsExpanded = false;
+      render();
+    };
+    const hbExpand = document.getElementById('hb-expand-btn');
+    if(hbExpand) hbExpand.onclick = ()=>{ ui.historyBookingsExpanded = true; render(); };
+
+    const hoSel = document.getElementById('ho-month-select');
+    if(hoSel) hoSel.onchange = ()=>{ ui.historyOrdersMonth = hoSel.value; };
+    const hoBtn = document.getElementById('ho-search-btn');
+    if(hoBtn) hoBtn.onclick = ()=>{
+      const sel = document.getElementById('ho-month-select');
+      ui.historyOrdersSearchedMonth = sel ? sel.value : ui.historyOrdersMonth;
+      ui.historyOrdersMonth = ui.historyOrdersSearchedMonth;
+      ui.historyOrdersExpanded = false;
+      render();
+    };
+    const hoExpand = document.getElementById('ho-expand-btn');
+    if(hoExpand) hoExpand.onclick = ()=>{ ui.historyOrdersExpanded = true; render(); };
+  }
+  if(ui.masseuseTab==='overview'){
+    const pb = document.getElementById('open-pricing-btn'); if(pb) pb.onclick = openPricingModal;
   }
 }
 function renderManageTab(){
@@ -1445,47 +1502,63 @@ function renderManageTab(){
     }
     <div class="divider"></div>
   `;
+  const hbDateFn = (b)=> b.date || null;
+  const hbMonths = getAvailableMonths(historyBookings, hbDateFn);
+  const hbSearched = ui.historyBookingsSearchedMonth;
+  const hbResults = hbSearched ? historyBookings
+    .filter(b=> (hbDateFn(b)||'').slice(0,7)===hbSearched)
+    .sort((a,b)=> a.date===b.date ? b.time.localeCompare(a.time) : b.date.localeCompare(a.date))
+    : [];
   const historyBookingsHTML = `
     <div class="eyebrow" style="text-align:left;">歷史預約管理</div>
-    ${historyBookings.length===0 ? `<div class="empty">目前沒有歷史預約紀錄</div>` : historyBookings.map(bookingRow).join('')}
+    ${renderMonthSearchHeader('hb', hbMonths, ui.historyBookingsMonth)}
+    ${renderMonthResultsList('hb', hbSearched, hbResults, ui.historyBookingsExpanded, bookingRow)}
     <div class="divider"></div>
   `;
+  const hoDateFn = (o)=> o.confirmedAt || o.cancelledAt || null;
+  const hoMonths = getAvailableMonths(orders.filter(o=> o.status==='confirmed' || o.status==='cancelled'), hoDateFn);
+  const hoSearched = ui.historyOrdersSearchedMonth;
+  const hoResults = hoSearched ? orders
+    .filter(o=> (o.status==='confirmed' || o.status==='cancelled') && (hoDateFn(o)||'').slice(0,7)===hoSearched)
+    .sort((a,b)=>{
+      const da = a.confirmedAt||a.cancelledAt||''; const db = b.confirmedAt||b.cancelledAt||'';
+      return db.localeCompare(da) || b.createdAt-a.createdAt;
+    })
+    : [];
+  const hoRow = (o)=>{
+    const isCancelled = o.status==='cancelled';
+    const dateLabel = isCancelled ? `${fmtDateNice(o.cancelledAt)} 已取消` : `${fmtDateNice(o.confirmedAt)} 確認收款`;
+    return `
+    <div class="list-item">
+      <div class="row" style="justify-content:space-between;align-items:center;">
+        <div style="font-size:12px;color:${isCancelled?'var(--danger)':'var(--muted)'};">${dateLabel}</div>
+        <span class="num" style="color:var(--gold-soft);font-size:16px;">${fmtMoney(o.total)}</span>
+      </div>
+      <div style="font-size:13px;margin-top:6px;">${o.items.map(it=>`${it.label}×${it.qty}`).join('、')}</div>
+      <button class="btn btn-ghost btn-sm mt8" data-edit-order="${o.id}"><span class="icon-symbol" style="color:#F3F3F3;">edit</span>編輯</button>
+    </div>`;
+  };
   const historyOrdersHTML = `
     <div class="eyebrow" style="text-align:left;">歷史訂單管理</div>
-    ${(() => {
-      const cutoff = monthsFromToday(-2);
-      const history = orders
-        .filter(o=> (o.status==='confirmed' || o.status==='cancelled') && (o.confirmedAt||o.cancelledAt) && (o.confirmedAt||o.cancelledAt)>=cutoff)
-        .sort((a,b)=>{
-          const da = a.confirmedAt||a.cancelledAt; const db = b.confirmedAt||b.cancelledAt;
-          return db.localeCompare(da) || b.createdAt-a.createdAt;
-        });
-      if(history.length===0) return `<div class="empty">近兩個月內沒有歷史訂單</div>`;
-      return history.map(o=>{
-        const isCancelled = o.status==='cancelled';
-        const dateLabel = isCancelled ? `${fmtDateNice(o.cancelledAt)} 已取消` : `${fmtDateNice(o.confirmedAt)} 確認收款`;
-        return `
-        <div class="list-item">
-          <div class="row" style="justify-content:space-between;align-items:center;">
-            <div style="font-size:12px;color:${isCancelled?'var(--danger)':'var(--muted)'};">${dateLabel}</div>
-            <span class="num" style="color:var(--gold-soft);font-size:16px;">${fmtMoney(o.total)}</span>
-          </div>
-          <div style="font-size:13px;margin-top:6px;">${o.items.map(it=>`${it.label}×${it.qty}`).join('、')}</div>
-          <button class="btn btn-ghost btn-sm mt8" data-edit-order="${o.id}"><span class="icon-symbol" style="color:#F3F3F3;">edit</span>編輯</button>
-        </div>`;
-      }).join('');
-    })()}
+    ${renderMonthSearchHeader('ho', hoMonths, ui.historyOrdersMonth)}
+    ${renderMonthResultsList('ho', hoSearched, hoResults, ui.historyOrdersExpanded, hoRow)}
     <button class="btn btn-ghost mt16" id="export-manage"><span class="icon-symbol" style="color:#F3F3F3;">csv</span>匯出預約管理與歷史訂單（Excel）</button>
   `;
   return bookingsHTML + ordersHTML + historyBookingsHTML + historyOrdersHTML;
 }
 function renderOverviewTab(){
-  const m = getMembership();
+  const p = settings.pricing;
   const thisMonth = todayStr().slice(0,7);
-  const monthSessions = sessions.filter(s=> s.date.startsWith(thisMonth) && s.service==='full');
+  const monthSessions = sessions.filter(s=> s.date.startsWith(thisMonth) && (s.service==='basic' || s.service==='luxury'));
   const totalMinutes = sessions
-    .filter(s=> s.date.startsWith(thisMonth) && (s.service==='full' || s.service==='upgrade'))
-    .reduce((sum,s)=> sum + (SERVICES[s.service]?.duration||0), 0);
+    .filter(s=> s.date.startsWith(thisMonth))
+    .reduce((sum,s)=>{
+      if(s.service==='basic') return sum + p.monthly.basicDuration;
+      if(s.service==='luxury') return sum + p.monthly.luxuryDuration;
+      if(s.service==='addonA') return sum + Math.max(0, p.addonA.totalDuration - p.monthly.basicDuration);
+      if(s.service==='addonB') return sum + Math.max(0, p.addonB.totalDuration - p.monthly.basicDuration);
+      return sum;
+    }, 0);
   const totalRevenue = orders.filter(o=>o.status==='confirmed' && o.confirmedAt && o.confirmedAt.startsWith(thisMonth)).reduce((s,o)=>s+o.total,0);
   return `
     <div class="mcard-wrap">
@@ -1496,7 +1569,96 @@ function renderOverviewTab(){
       <div class="quota-pill"><div class="n num">${totalMinutes}</div><div class="l">本月總分鐘</div></div>
       <div class="quota-pill"><div class="n num">${fmtMoney(totalRevenue)}</div><div class="l">本月營收</div></div>
     </div>
+    <button class="btn btn-ghost mt16" id="open-pricing-btn"><span class="icon-symbol" style="color:#F3F3F3;">edit</span>價目表設定</button>
   `;
+}
+function openPricingModal(){
+  const draft = clonePricing(settings.pricing);
+  const bg = document.createElement('div');
+  bg.className='modal-bg';
+  function draw(){
+    bg.innerHTML = `
+      <div class="modal card-panel">
+        <div class="h1" style="font-size:17px;">價目表設定</div>
+        <div style="font-size:11.5px;color:var(--muted);margin-top:4px;line-height:1.6;">修改會立即生效。已購買的訂單金額與已完成的預約紀錄不會被改變；但目前生效中的月訂閱剩餘次數／到期天數是即時計算，調整次數或天數會直接套用到目前的訂閱。</div>
+
+        <div class="eyebrow" style="text-align:left;margin-top:16px;">月訂閱</div>
+        <label class="label mt8">名稱</label>
+        <input class="input" id="pm-monthly-label" value="${draft.monthly.label}">
+        <div class="row mt8" style="gap:10px;">
+          <div class="col"><label class="label">價格（元）</label><input class="input" type="number" step="0.5" id="pm-monthly-price" value="${draft.monthly.price}"></div>
+          <div class="col"><label class="label">有效天數</label><input class="input" type="number" id="pm-monthly-days" value="${draft.monthly.days}"></div>
+        </div>
+        <label class="label mt8">基礎項目名稱</label>
+        <input class="input" id="pm-basic-label" value="${draft.monthly.basicLabel}">
+        <div class="row mt8" style="gap:10px;">
+          <div class="col"><label class="label">基礎次數</label><input class="input" type="number" id="pm-basic-count" value="${draft.monthly.basicCount}"></div>
+          <div class="col"><label class="label">基礎時長（分鐘）</label><input class="input" type="number" id="pm-basic-duration" value="${draft.monthly.basicDuration}"></div>
+        </div>
+        <label class="label mt8">頂奢項目名稱</label>
+        <input class="input" id="pm-luxury-label" value="${draft.monthly.luxuryLabel}">
+        <div class="row mt8" style="gap:10px;">
+          <div class="col"><label class="label">頂奢次數</label><input class="input" type="number" id="pm-luxury-count" value="${draft.monthly.luxuryCount}"></div>
+          <div class="col"><label class="label">頂奢時長（分鐘）</label><input class="input" type="number" id="pm-luxury-duration" value="${draft.monthly.luxuryDuration}"></div>
+        </div>
+
+        <div class="divider"></div>
+        <div class="eyebrow" style="text-align:left;">加購項目 A</div>
+        <label class="label mt8">名稱</label>
+        <input class="input" id="pm-a-label" value="${draft.addonA.label}">
+        <div class="row mt8" style="gap:10px;">
+          <div class="col"><label class="label">升級後總時長（分鐘）</label><input class="input" type="number" id="pm-a-total" value="${draft.addonA.totalDuration}"></div>
+          <div class="col"><label class="label">價格（元）</label><input class="input" type="number" step="0.5" id="pm-a-price" value="${draft.addonA.price}"></div>
+        </div>
+
+        <div class="divider"></div>
+        <div class="eyebrow" style="text-align:left;">加購項目 B</div>
+        <label class="label mt8">名稱</label>
+        <input class="input" id="pm-b-label" value="${draft.addonB.label}">
+        <div class="row mt8" style="gap:10px;">
+          <div class="col"><label class="label">升級後總時長（分鐘）</label><input class="input" type="number" id="pm-b-total" value="${draft.addonB.totalDuration}"></div>
+          <div class="col"><label class="label">價格（元）</label><input class="input" type="number" step="0.5" id="pm-b-price" value="${draft.addonB.price}"></div>
+        </div>
+
+        <div class="row mt20">
+          <button class="btn btn-ghost col" id="pm-cancel">取消</button>
+          <button class="btn btn-solid col" id="pm-save">儲存</button>
+        </div>
+      </div>`;
+    bg.querySelector('#pm-cancel').onclick = ()=> bg.remove();
+    bg.querySelector('#pm-save').onclick = ()=>{
+      const num = (id, fallback)=>{ const v = parseFloat(bg.querySelector(id).value); return isFinite(v) ? v : fallback; };
+      const str = (id, fallback)=>{ const v = bg.querySelector(id).value.trim(); return v || fallback; };
+      const newPricing = {
+        monthly: {
+          label: str('#pm-monthly-label', draft.monthly.label),
+          price: num('#pm-monthly-price', draft.monthly.price),
+          days: Math.max(1, Math.round(num('#pm-monthly-days', draft.monthly.days))),
+          basicLabel: str('#pm-basic-label', draft.monthly.basicLabel),
+          basicCount: Math.max(0, Math.round(num('#pm-basic-count', draft.monthly.basicCount))),
+          basicDuration: Math.max(1, Math.round(num('#pm-basic-duration', draft.monthly.basicDuration))),
+          luxuryLabel: str('#pm-luxury-label', draft.monthly.luxuryLabel),
+          luxuryCount: Math.max(0, Math.round(num('#pm-luxury-count', draft.monthly.luxuryCount))),
+          luxuryDuration: Math.max(1, Math.round(num('#pm-luxury-duration', draft.monthly.luxuryDuration)))
+        },
+        addonA: {
+          label: str('#pm-a-label', draft.addonA.label),
+          totalDuration: Math.max(1, Math.round(num('#pm-a-total', draft.addonA.totalDuration))),
+          price: num('#pm-a-price', draft.addonA.price)
+        },
+        addonB: {
+          label: str('#pm-b-label', draft.addonB.label),
+          totalDuration: Math.max(1, Math.round(num('#pm-b-total', draft.addonB.totalDuration))),
+          price: num('#pm-b-price', draft.addonB.price)
+        }
+      };
+      dbUpsertSettings({ pricing: newPricing });
+      bg.remove(); render();
+      showToast('價目表已更新');
+    };
+  }
+  draw();
+  document.body.appendChild(bg);
 }
 
 /* ================= init ================= */
